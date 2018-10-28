@@ -96,7 +96,7 @@
 /*
  * Integer unit                                           
  */
-#define CONFIG_IU_NWINDOWS (8)
+#define CONFIG_IU_NWINDOWS (2)
 #undef  CONFIG_IU_V8MULDIV
 #undef  CONFIG_IU_BP
 #undef  CONFIG_IU_SVT

@@ -1724,12 +1724,12 @@ procedure cwp_gen(r, v : registers; annul, wcwp : std_ulogic; ncwp : cwptype;
                   cwp : out cwptype; awp: out cwptype; aw,paw: out std_ulogic;
                   stwin,de_cwpmax: out cwptype) is
  begin
-    cwp := "000";
+    cwp := (others => '0'); --NOTE: temporary fix for register windows removal
     aw := '0';
     paw := '0';
-    awp := "000";
-    stwin := "000";
-    de_cwpmax := "000";
+    awp := (others => '0'); --NOTE: temporary fix for register windows removal
+    stwin := (others => '0'); --NOTE: temporary fix for register windows removal
+    de_cwpmax := (others => '0'); --NOTE: temporary fix for register windows removal
 end;
 
 -- generate wcwp in ex stage
@@ -1756,7 +1756,7 @@ begin
   op := inst(31 downto 30); op3 := inst(24 downto 19);
   wovf_exc := '0'; wunf_exc := '0'; wim := (others => '0');
   wim(NWIN-1 downto 0) := xc_wim; wcwp := '0';
-  ncwp := "000";
+  ncwp := (others => '0'); --NOTE: temporary fix for register windows removal
   de_cwp := ncwp;
 end;
 

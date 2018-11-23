@@ -21,6 +21,7 @@
 -- Package: 	allmem
 -- File:	allmem.vhd
 -- Author:	Jiri Gaisler Gaisler Research
+-- Modified:    Vítor Marge Eichemberger, IC-Unicamp (Changed processor ISA to RISCV-RV32I)
 -- Description:	All tech specific memories
 ------------------------------------------------------------------------------
 
@@ -680,8 +681,8 @@ end component;
 -- synchronous 3-port regfile (2 read, 1 write port)
 
   component generic_regfile_3p
-  generic (tech : integer := 0; abits : integer := 6; dbits : integer := 32;
-           wrfst : integer := 0; numregs : integer := 40;
+  generic (tech : integer := 0; abits : integer := 5; dbits : integer := 32;
+           wrfst : integer := 0; numregs : integer := 32;
            delout: integer := 0);
   port (
     wclk   : in  std_ulogic;

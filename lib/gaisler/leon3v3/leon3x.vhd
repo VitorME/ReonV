@@ -21,7 +21,8 @@
 -- Entity:      leon3x
 -- File:        leon3x.vhd
 -- Author:      Jiri Gaisler, Jan Andersson, Aeroflex Gaisler
--- Description: Top-level LEON3v3 component with all options
+-- Modified:    Vítor Marge Eichemberger, IC-Unicamp (Changed processor ISA to RISCV-RV32I)
+-- Description: Top-level ReonV (before was LEON3v3) component with all options
 ------------------------------------------------------------------------------
 
 library ieee;
@@ -125,8 +126,8 @@ end;
 
 architecture rtl of leon3x is
 
-constant IRFBITS  : integer range 6 to 10 := log2(NWINDOWS+1) + 4;
-constant IREGNUM  : integer := NWINDOWS * 16 + 8;
+constant IRFBITS  : integer := 5; -- Register file addressing bits (in SPARC, 6 to 10 := log2(NWINDOWS+1) + 4)
+constant IREGNUM  : integer := 32; -- Registers Number (in SPARC, := NWINDOWS * 16 + 8)
 
 constant IRFWT     : integer := 1;--regfile_3p_write_through(memtech);
 constant fpuarch   : integer := fpu mod 16;

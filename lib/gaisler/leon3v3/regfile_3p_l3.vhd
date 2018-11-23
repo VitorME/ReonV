@@ -21,6 +21,7 @@
 -- Entity:      regfile_3p_l3
 -- File:        regfile_3p_l3.vhd
 -- Author:      Jiri Gaisler, Edvin Catovic - Gaisler Research
+-- Modified:    Vítor Marge Eichemberger, IC-Unicamp (Changed processor ISA to RISCV-RV32I)
 -- Description: 3-port regfile implemented with two 2-port rams
 ------------------------------------------------------------------------------
 
@@ -32,8 +33,8 @@ use techmap.gencomp.all;
 use grlib.stdlib.all;
 
 entity regfile_3p_l3 is
-  generic (tech : integer := 0; abits : integer := 6; dbits : integer := 8;
-           wrfst : integer := 0; numregs : integer := 64;
+  generic (tech : integer := 0; abits : integer := 5; dbits : integer := 32;
+           wrfst : integer := 0; numregs : integer := 32;
            testen : integer := 0);
   port (
     wclk   : in  std_ulogic;

@@ -21,6 +21,7 @@
 -- Entity: 	regfile_3p
 -- File:	regfile_3p.vhd
 -- Author:	Jiri Gaisler Gaisler Research
+-- Modified:    Vítor Marge Eichemberger, IC-Unicamp (Changed processor ISA to RISCV-RV32I)
 -- Description:	3-port regfile implemented with two 2-port rams
 ------------------------------------------------------------------------------
 
@@ -31,8 +32,8 @@ use techmap.gencomp.all;
 use techmap.allmem.all;
 
 entity regfile_3p is
-  generic (tech : integer := 0; abits : integer := 6; dbits : integer := 8;
-           wrfst : integer := 0; numregs : integer := 64; testen : integer := 0;
+  generic (tech : integer := 0; abits : integer := 5; dbits : integer := 32;
+           wrfst : integer := 0; numregs : integer := 32; testen : integer := 0;
            custombits : integer := 1);
   port (
     wclk   : in  std_ulogic;
@@ -53,8 +54,8 @@ entity regfile_3p is
 end;
 
 architecture rtl of regfile_3p is
-  constant rfinfer : boolean := (regfile_3p_infer(tech) = 1) or
-	(((is_unisim(tech) = 1)) and (abits <= 5));
+  constant rfinfer : boolean := true;
+-- rfinfer condition before (on Leon3) := (regfile_3p_infer(tech) = 1) or (((is_unisim(tech) = 1)) and (abits <= 5));
   signal xwe,xre1,xre2 : std_ulogic;
 
 
@@ -64,6 +65,11 @@ begin
   xwe <= we and not testin(TESTIN_WIDTH-2) when testen/=0 else we;
   xre1 <= re1 and not testin(TESTIN_WIDTH-2) when testen/=0 else re1;
   xre2 <= re2 and not testin(TESTIN_WIDTH-2) when testen/=0 else re2;
+
+  -- NOTE: Not using peregrine regfile with 2 syncrams anymore.
+  -- Leon3 (made for SPARC v8) used it in some conditions, but now with ReonV
+  -- (LEON3 adapted for RISC-V) it is not necessary anymore, since it always
+  -- uses a simple 32x32 regfile.
   
   s0 : if rfinfer generate
       rhu : generic_regfile_3p generic map (tech, abits, dbits, wrfst, numregs)

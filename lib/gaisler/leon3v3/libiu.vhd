@@ -21,7 +21,8 @@
 -- Package:     libiu
 -- File:        libiu.vhd
 -- Author:      Jiri Gaisler Gaisler Research
--- Description: LEON3 IU types and components
+-- Modified:    Vítor Marge Eichemberger, IC-Unicamp (Changed processor ISA to RISCV-RV32I)
+-- Description: ReonV (before was LEON3) IU types and components
 ------------------------------------------------------------------------------
 
 library ieee;
@@ -44,10 +45,10 @@ package libiu is
 
 
   type iregfile_in_type is record
-     raddr1        : std_logic_vector(9 downto 0); -- read address 1
-     raddr2        : std_logic_vector(9 downto 0); -- read address 2
-     waddr         : std_logic_vector(9 downto 0); -- write address
-     wdata         : std_logic_vector(31 downto 0); -- write data
+     raddr1        : std_logic_vector(5-1 downto 0); -- read address 1
+     raddr2        : std_logic_vector(5-1 downto 0); -- read address 2
+     waddr         : std_logic_vector(5-1 downto 0); -- write address
+     wdata         : std_logic_vector(32-1 downto 0); -- write data
      ren1          : std_ulogic;                    -- read 1 enable
      ren2          : std_ulogic;                    -- read 2 enable
      wren          : std_ulogic;                    -- write enable

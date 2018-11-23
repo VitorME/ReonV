@@ -21,6 +21,7 @@
 -- Entity: 	various
 -- File:	memory_inferred.vhd
 -- Author:	Jiri Gaisler Gaisler Research
+-- Modified:    Vítor Marge Eichemberger, IC-Unicamp (Changed processor ISA to RISCV-RV32I)
 -- Description:	Behavioural memory generators
 ------------------------------------------------------------------------------
 
@@ -218,8 +219,8 @@ library grlib;
 use grlib.stdlib.all;
 
 entity generic_regfile_3p is
-  generic (tech : integer := 0; abits : integer := 6; dbits : integer := 32;
-           wrfst : integer := 0; numregs : integer := 40; delout: integer := 0);
+  generic (tech : integer := 0; abits : integer := 5; dbits : integer := 32;
+           wrfst : integer := 0; numregs : integer := 32; delout: integer := 0);
   port (
     wclk   : in  std_ulogic;
     waddr  : in  std_logic_vector((abits -1) downto 0);

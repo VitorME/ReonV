@@ -658,6 +658,7 @@ architecture rtl of iu3 is
   end;
 
 
+-- grmon Writing Procedure (through DSU):
   procedure diagwr(r    : in registers;
                    dsur : in dsu_registers;
                    ir   : in irestart_register;
@@ -839,6 +840,7 @@ architecture rtl of iu3 is
     return(asr17);
   end;
 
+-- grmon Reading Procedure (through DSU):
   procedure diagread(dbgi   : in l3_debug_in_type;
                      r      : in registers;
                      dsur   : in dsu_registers;
@@ -1414,7 +1416,7 @@ architecture rtl of iu3 is
     s.ps    := '1';
     s.s     := '1';
     s.et    := '0';
-    s.y     := (others => '0');
+    s.y     := (others => '0'); -- Register Y
     s.asr18 := (others => '0');
     s.svt   := '0';
     s.dwt   := '0';
@@ -3053,11 +3055,15 @@ end;
   signal cpu_index : std_logic_vector(3 downto 0);
   signal disasen : std_ulogic;
 
-begin
+  -- cycle counter
+  signal run_state_flag: std_logic := '0';
+
+begin -- Begin of IU3 Architecture
 
   BPRED <= '0' when bp = 0 else '1' when bp = 1 else not (r.w.s.dbp or r.d.rexen);
   BLOCKBPMISS <= '0' when bp = 0 else '1' when bp = 1 else r.w.s.dbprepl;
 
+  -- Pipeline Process:
   comb : process(ico, dco, rfo, r, wpr, ir, dsur, rstn, holdn, irqi, dbgi, fpo, cpo, tbo, tbo_2p,
                  mulo, divo, dummy, rp, BPRED, BLOCKBPMISS)
 
@@ -3939,7 +3945,14 @@ begin
     fpi <= vfpi;
     cpi <= vfpi;      -- dummy, just to kill some warnings ...
 
-  end process;
+    -- cycle counter
+    if (r.x.rstate = run) then
+      run_state_flag <= '1';
+    else
+      run_state_flag <= '0';
+    end if;
+
+  end process; -- End of Pipeline Process
 
   preg : process (sclk)
   begin
@@ -3958,11 +3971,21 @@ begin
     end if;
   end process;
 
+  -- Pipeline Update Process:
   reg : process (clk)
   begin
     if rising_edge(clk) then
       if (holdn = '1') then
         r <= rin;
+
+        -- cycle counter
+        if (run_state_flag = '1') then
+          if (r.w.s.y = (31 downto 0 => '1')) then
+            r.w.s.y <= (OTHERS => '0');
+          else
+            r.w.s.y <= r.w.s.y + 1;
+          end if;
+        end if;
       else
         r.x.ipend <= rin.x.ipend;
         r.m.werr <= rin.m.werr;
@@ -4042,7 +4065,7 @@ begin
         r.d.irqlatmet <= RRES.d.irqlatmet;
       end if;
     end if;
-  end process;
+  end process; -- End of Pipeline Update Process
 
 
   dsugen : if DBGUNIT generate

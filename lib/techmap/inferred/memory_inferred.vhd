@@ -241,6 +241,7 @@ entity generic_regfile_3p is
 end;
 
 architecture rtl of generic_regfile_3p is
+  constant debug_registers : boolean := false; -- if true, reading the register i returns i
   type mem is array(0 to numregs-1) 
 	of std_logic_vector((dbits -1) downto 0);
   signal memarr : mem;
@@ -277,10 +278,16 @@ begin
     end if;
   end process;
 
-  rdata1i <= din when (wr = '1') and (wa = ra1) and (wrfst = 1)
-	else memarr(conv_integer(ra1));
-  rdata2i <= din when (wr = '1') and (wa = ra2) and (wrfst = 1)
-	else memarr(conv_integer(ra2));
+  dbr : if debug_registers generate
+    rdata1i <= (31 downto raddr1'length => '0') & raddr1;
+    rdata2i <= (31 downto raddr2'length => '0') & raddr2;
+  end generate;
+  nbdr: if not debug_registers generate
+    rdata1i <= din when (wr = '1') and (wa = ra1) and (wrfst = 1)
+	  else memarr(conv_integer(ra1));
+    rdata2i <= din when (wr = '1') and (wa = ra2) and (wrfst = 1)
+	  else memarr(conv_integer(ra2));
+  end generate;
 
   rdata1 <= rdata1i;
   rdata2 <= rdata2i;

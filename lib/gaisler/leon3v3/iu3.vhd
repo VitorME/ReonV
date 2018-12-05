@@ -583,6 +583,131 @@ architecture rtl of iu3 is
 
   end record;
 
+-- TODO: (2 bit BP)
+-- > foward data: branch_was_taken, branch_address(?)
+-- > Consult BP in fetch and branch if necessary
+-- > Stop holding pipeline in decode if its a branch
+-- > Call procedure 'bp2b_update_table' after getting branch condition answer 'branch_true' (in execute or memory)
+-- > annul instructions if BP misses
+
+--------------------------------------------------------------------------------
+-- 2 bit Branch Predictor (bp2b, by Vitor) -------------------------------------
+
+  -- 2 bit BP state type
+  subtype bp2b_states_type is std_logic_vector(1 downto 0);
+
+  -- Constants for 2 bit BP states
+  constant BP2B_SNT : bp2b_states_type := "00"; -- Strongly Not Taken 2 bit BP State
+  constant BP2B_WNT : bp2b_states_type := "01"; -- Weakly Not Taken 2 bit BP State
+  constant BP2B_WT  : bp2b_states_type := "10"; -- Weakly Taken 2 bit BP State
+  constant BP2B_ST  : bp2b_states_type := "11"; -- Strongly Taken 2 bit BP State
+  -- Defining the initial state
+  constant BP2B_INITIAL_STATE  : bp2b_states_type := BP2B_WNT;
+
+  -- 2 bit BP table constant values
+  constant BP2B_TABLE_SIZE        : integer := 256; -- 256
+  constant BP2B_TABLE_HASH_BITS   : integer := log2(BP2B_TABLE_SIZE); -- 8
+  constant BP2B_TABLE_DEST_BITS   : integer := 30; -- 30
+  constant BP2B_TABLE_TAG_BITS    : integer := 32 - BP2B_TABLE_HASH_BITS - 2; -- 22
+  constant BP2B_TABLE_ENTRY_SIZE  : integer := BP2B_TABLE_TAG_BITS + 2 + BP2B_TABLE_DEST_BITS; -- 54
+
+  --subtype bp2b_table_dest_type is std_logic_vector(BP2B_TABLE_DEST_BITS-1 downto 0); --> should use pctype
+  subtype bp2b_table_tag_type is std_logic_vector(BP2B_TABLE_TAG_BITS-1 downto 0);
+
+  -- 2 bit BP table entry type and constant for new one
+  subtype bp2b_table_entry_type is std_logic_vector(BP2B_TABLE_ENTRY_SIZE-1 downto 0);
+  constant BP2B_EMPTY_TAG : std_logic_vector(BP2B_TABLE_TAG_BITS-1 downto 0) := (others => '0');
+  constant BP2B_EMPTY_DEST : std_logic_vector(BP2B_TABLE_DEST_BITS-1 downto 0) := (others => '0');
+  constant BP2B_NEW_ENTRY  : bp2b_table_entry_type := BP2B_EMPTY_TAG & BP2B_INITIAL_STATE & BP2B_EMPTY_DEST;
+
+  -- 2 bit BP table type
+  type bp2b_table_type is array(0 to BP2B_TABLE_SIZE-1) 
+    of bp2b_table_entry_type;
+
+  -- 2 bit BP control type
+  type bp2b_ctrl_type is record
+    table        : bp2b_table_type; -- 2 bit BP table
+    last_taken   : std_ulogic; -- boolean indicating if last branch was taken
+    last_hit     : std_ulogic; -- boolean indicating if last prediction was correct
+    total_misses : word; -- total BP misses
+    total_hits   : word; -- total BP hits
+  end record;
+
+  -- Constant for a new/empty bp2b_ctrl_type
+  constant bp2b_ctrl_res : bp2b_ctrl_type := (
+    table        => (others => BP2B_NEW_ENTRY),
+    last_taken   => '0',
+    last_hit     => '0',
+    total_misses => (others => '0'),
+    total_hits   => (others => '0')
+  );
+
+  -- Evalues the next BP 2 bit state
+  function bp2b_next_state (previous_state : bp2b_states_type; branch_true : std_ulogic) return bp2b_states_type is
+    variable tmp : bp2b_states_type;
+  begin
+    if (branch_true = '1' and previous_state /= BP2B_ST) then
+      tmp := previous_state + 1;
+  elsif (branch_true = '0' and previous_state /= BP2B_SNT) then
+      tmp := previous_state - 1;
+    end if;
+    return (tmp);
+  end;
+
+  -- Checks the prediction and returns if should or not take the branch
+  function bp2b_should_branch(branch_table : bp2b_table_type; pc : pctype) return boolean is
+    variable hash : integer;
+    variable bp_state : bp2b_states_type;
+    variable bp_tag, pc_tag : bp2b_table_tag_type;
+    variable tmp : boolean;
+  begin
+    hash := conv_integer(pc((BP2B_TABLE_HASH_BITS+PCLOW)-1 downto PCLOW));
+    bp_tag := branch_table(hash)(BP2B_TABLE_ENTRY_SIZE-1 downto (BP2B_TABLE_ENTRY_SIZE - BP2B_TABLE_TAG_BITS));
+    pc_tag := pc((BP2B_TABLE_TAG_BITS + BP2B_TABLE_HASH_BITS + PCLOW)-1 downto BP2B_TABLE_HASH_BITS + PCLOW);
+    bp_state := branch_table(hash)((BP2B_TABLE_DEST_BITS+2)-1 downto BP2B_TABLE_DEST_BITS);
+    
+    tmp := false;
+    if ((pc_tag = bp_tag) and (bp_state = BP2B_WT or bp_state = BP2B_ST)) then
+        tmp := true;
+    end if;
+    
+    return (tmp);
+  end;
+
+  -- Updates BP Table (you should only call this if the instr is a branch)
+  procedure bp2b_update_table(curr_bp2b : in  bp2b_ctrl_type; branch_was_taken, branch_true : in std_ulogic;
+                              pc, branch_address : in pctype;
+                              next_bp2b : out bp2b_ctrl_type) is
+    variable hash : integer;
+    variable bp_state, next_bp_state : bp2b_states_type;
+    variable bp_tag, pc_tag : bp2b_table_tag_type;
+  begin
+    hash := conv_integer(pc((BP2B_TABLE_HASH_BITS+PCLOW)-1 downto PCLOW));
+    bp_tag := curr_bp2b.table(hash)(BP2B_TABLE_ENTRY_SIZE-1 downto (BP2B_TABLE_ENTRY_SIZE - BP2B_TABLE_TAG_BITS));
+    pc_tag := pc((BP2B_TABLE_TAG_BITS + BP2B_TABLE_HASH_BITS + PCLOW)-1 downto BP2B_TABLE_HASH_BITS + PCLOW);
+    bp_state := curr_bp2b.table(hash)((BP2B_TABLE_DEST_BITS+2)-1 downto BP2B_TABLE_DEST_BITS);
+    
+    -- Updates metadata
+    next_bp2b.last_taken := branch_was_taken;
+    if (branch_true = branch_was_taken) then
+        next_bp2b.total_hits := curr_bp2b.total_hits + 1;
+        next_bp2b.last_hit := '1';
+    else
+        next_bp2b.total_misses := curr_bp2b.total_misses + 1;
+        next_bp2b.last_hit := '0';
+    end if;
+    
+    -- Updates the table
+    next_bp_state := BP2B_INITIAL_STATE;
+    if (bp_tag = pc_tag) then
+        next_bp_state := bp2b_next_state (bp_state, branch_true);
+    end if;
+    next_bp2b.table(hash) := pc_tag & next_bp_state & branch_address;
+  end;
+
+-- End of 2 bit Branch Predictor -----------------------------------------------
+--------------------------------------------------------------------------------
+
   type write_reg_type is record
     s      : special_register_type;
     result : word;
@@ -600,6 +725,7 @@ architecture rtl of iu3 is
     m  : memory_reg_type;
     x  : exception_reg_type;
     w  : write_reg_type;
+    bp2b : bp2b_ctrl_type; -- 2 bit BP control (bp2b)
   end record;
 
   type exception_type is record
@@ -1458,7 +1584,8 @@ architecture rtl of iu3 is
     e => execute_reg_res,
     m => memory_reg_res,
     x => exception_reg_res,
-    w => write_reg_res
+    w => write_reg_res,
+    bp2b => bp2b_ctrl_res -- initializing 2 bit BP (bp2b)
     );
   constant exception_res : exception_type := (
     pri   => '0',
@@ -3630,6 +3757,7 @@ begin -- Begin of IU3 Architecture
       end if;
     end if;
 
+    -- Gets instruction from instruction cache
     if ISETS > 1 then de_inst1 := r.d.inst(conv_integer(r.d.set));
     else de_inst1 := r.d.inst(0); end if;
 
@@ -3658,7 +3786,7 @@ begin -- Begin of IU3 Architecture
     rs1_gen(r, de_inst, v.a.rs1, de_rs1mod);
     de_rs2 := de_inst(24 downto 20);
 
-    -- Get registers address based on the LEON3 register window system
+    -- Get registers address based on the LEON3 register window system (forcing to not use the windows)
     de_raddr1 := (others => '0'); de_raddr2 := (others => '0');
     de_raddr1(4 downto 0) := v.a.rs1(4 downto 0);
     de_raddr2(4 downto 0) := de_rs2(4 downto 0);
@@ -3839,6 +3967,7 @@ begin -- Begin of IU3 Architecture
     ici.su <= v.a.su;
 
 
+    -- Stores instructions at instruction cache
     if (ico.mds and de_hold_pc) = '0' then
       v.d.rexbuf := de_inst1;
       for i in 0 to isets-1 loop

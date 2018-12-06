@@ -3286,6 +3286,9 @@ begin -- Begin of IU3 Architecture
   variable tovx : std_ulogic;
   variable bpmiss : std_ulogic;
   variable pccomp : std_logic_vector(3 downto 0);
+  
+  -- bp2b: annul flag in case of miss
+  variable bp2b_annul : std_ulogic;
 
   begin
 
@@ -3293,6 +3296,8 @@ begin -- Begin of IU3 Architecture
     xc_fpexack := '0'; sidle := '0';
     fpcdbgwr := '0'; vir := ir; xc_rstn := rstn;
     de_pcout := rex_dpc(r.d.pc, r.d.rexen, r.d.rexpos);
+    
+    bp2b_annul := '0'; -- bp2b: annul flag
 
 -----------------------------------------------------------------------
 -- EXCEPTION STAGE
@@ -3527,6 +3532,7 @@ begin -- Begin of IU3 Architecture
 -- MEMORY STAGE
 -----------------------------------------------------------------------
 
+    -- Fowarding stages: Exception Stage receives data from Memory Stage
     v.x.ctrl := r.m.ctrl; v.x.dci := r.m.dci;
     v.x.ctrl.rett := r.m.ctrl.rett and not r.m.ctrl.annul;
     v.x.mac := r.m.mac; v.x.laddr := r.m.result(1 downto 0);
@@ -3607,6 +3613,7 @@ begin -- Begin of IU3 Architecture
 -- EXECUTE STAGE
 -----------------------------------------------------------------------
 
+    -- Fowarding stages: Memory Stage receives data from Execute Stage
     v.m.ctrl := r.e.ctrl; ex_op1 := r.e.op1; ex_op2 := r.e.op2;
     v.m.ctrl.rett := r.e.ctrl.rett and not r.e.ctrl.annul;
     v.m.ctrl.wreg := r.e.ctrl.wreg and not v.x.annul_all;
@@ -3697,6 +3704,11 @@ begin -- Begin of IU3 Architecture
     dci.edata <= ex_edata2;
     -- BP disabled
     --bp_miss_ex(r, r.m.icc, ex_bpmiss, ra_bpannul);
+    
+    -- bp2b: Annuls if BP missed
+    v.m.ctrl.annul := v.m.ctrl.annul or bp2b_annul;
+    v.m.ctrl.wicc := v.m.ctrl.wicc and not bp2b_annul;
+    v.m.ctrl.wreg := v.m.ctrl.wreg and not bp2b_annul;
 
     v.m .itrhit := r.e.itrhit;
 
@@ -3709,6 +3721,7 @@ begin -- Begin of IU3 Architecture
     pccompare(r,wpr,pccomp);
     v.e.itrhit := itrhitc(dsur,pccomp);
 
+    -- Fowarding stages: Execute Stage receives data from Register Access Stage
     v.e.ctrl := r.a.ctrl; v.e.jmpl := r.a.jmpl and not r.a.ctrl.trap;
     v.e.ctrl.annul := r.a.ctrl.annul or ra_bpannul or v.x.annul_all;
     v.e.ctrl.rett := r.a.ctrl.rett and not r.a.ctrl.annul and not r.a.ctrl.trap;
@@ -3739,6 +3752,11 @@ begin -- Begin of IU3 Architecture
     -- BP disabled
     --bp_miss_ra(r, ra_bpmiss, de_bpannul);
     --v.e.bp := r.a.bp and not ra_bpmiss;
+
+    -- bp2b: Annuls if BP missed
+    v.e.ctrl.annul := v.e.ctrl.annul or bp2b_annul;
+    v.e.ctrl.wicc := v.e.ctrl.wicc and not bp2b_annul;
+    v.e.ctrl.wreg := v.e.ctrl.wreg and not bp2b_annul;
 
 
 -----------------------------------------------------------------------
@@ -3818,6 +3836,12 @@ begin -- Begin of IU3 Architecture
         de_hold_pc, v.a.ticc, v.a.ctrl.rett, v.a.mulstart, v.a.divstart,
         ra_bpmiss, ex_bpmiss, de_iperr, ico.bpmiss, ico.eocl);
     v.d.pcheld := de_hold_pc;
+
+    -- bp2b: Annuls if BP missed
+    v.a.ctrl.annul := v.a.ctrl.annul or bp2b_annul;
+    v.a.ctrl.wicc := v.a.ctrl.wicc and not bp2b_annul;
+    v.a.ctrl.wreg := v.a.ctrl.wreg and not bp2b_annul;
+    v.d.annul := v.d.annul or bp2b_annul;
 
     -- Branch prediction disabled
     --v.a.bp := v.a.bp and not v.a.ctrl.annul;

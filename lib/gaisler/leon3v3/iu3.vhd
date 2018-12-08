@@ -3763,20 +3763,8 @@ begin -- Begin of IU3 Architecture
     -- Updates BP Table
     if (BP2B_ENABLE and v.e.ctrl.annul = '0' and r.e.ctrl.inst(6 downto 0) = R_BRANCH) then
         -- CHECK: If you should only call this if the instr is a branch (?)
-      --bp2b_update_table(r.bp2b, r.e.bp2b_branch_was_taken, branch_true("11", v.m.icc, r.e.ctrl.inst), r.e.ctrl.pc, r.e.bp2b_branch_address, bp2b_correct_pc, v.bp2b);
-      --bp2b_annul := not v.bp2b.last_hit;
-      
-      -- Currently using an Always Not Branch BP
-      if (branch_true("11", v.m.icc, r.e.ctrl.inst) = '1') then
-          bp2b_correct_pc := r.e.bp2b_branch_address;
-          bp2b_annul := '1';
-      end if;
-      
-      -- -- Always Branch
-      -- if (branch_true("11", v.m.icc, r.e.ctrl.inst) = '0') then
-      --     bp2b_correct_pc := r.e.ctrl.pc(31 downto PCLOW) + 1;
-      --     bp2b_annul := '1';
-      -- end if;
+      bp2b_update_table(r.bp2b, r.e.bp2b_branch_was_taken, branch_true("11", v.m.icc, r.e.ctrl.inst), r.e.ctrl.pc, r.e.bp2b_branch_address, bp2b_correct_pc, v.bp2b);
+      bp2b_annul := not v.bp2b.last_hit;
     end if;
 
     -- Updates pipeline registers

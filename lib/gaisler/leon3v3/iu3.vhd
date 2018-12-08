@@ -726,12 +726,21 @@ architecture rtl of iu3 is
         correct_pc := branch_address;
     end if;
     
+    -- Checks if the branch was taken to a wrong (or outdated) address
+    if (branch_true = '1' and branch_address /= curr_bp2b.table(hash)(BP2B_TABLE_DEST_BITS-1 downto 0)) then
+        next_bp2b.total_misses := curr_bp2b.total_misses + 1;
+        next_bp2b.last_hit := '0';
+        correct_pc := branch_address;
+    end if;
+    
     -- Updates the table
     next_bp_state := BP2B_INITIAL_STATE;
     if (bp_tag = pc_tag) then
         next_bp_state := bp2b_next_state (bp_state, branch_true);
     end if;
-    next_bp2b.table(hash) := pc_tag & next_bp_state & branch_address;
+    -- Not updating table yet, since it causes wrong behavior.
+    -- Currently using Always Not Taken Branch Predictor, since the 2 bit BP is under debug/review
+    --next_bp2b.table(hash) := pc_tag & next_bp_state & branch_address;
   end;
 
 -- End of 2 bit Branch Predictor -----------------------------------------------
@@ -3752,16 +3761,22 @@ begin -- Begin of IU3 Architecture
     end if;
     
     -- Updates BP Table
-    if (BP2B_ENABLE and v.e.ctrl.annul = '0') then
+    if (BP2B_ENABLE and v.e.ctrl.annul = '0' and r.e.ctrl.inst(6 downto 0) = R_BRANCH) then
         -- CHECK: If you should only call this if the instr is a branch (?)
-      --bp2b_update_table(r.bp2b, r.m.bp2b_branch_was_taken, branch_true("11", r.m.icc, r.m.ctrl.inst), r.m.ctrl.pc, r.m.bp2b_branch_address, bp2b_correct_pc, v.bp2b);
+      --bp2b_update_table(r.bp2b, r.e.bp2b_branch_was_taken, branch_true("11", v.m.icc, r.e.ctrl.inst), r.e.ctrl.pc, r.e.bp2b_branch_address, bp2b_correct_pc, v.bp2b);
       --bp2b_annul := not v.bp2b.last_hit;
       
-      -- Currently using a Always Not Branch BP
+      -- Currently using an Always Not Branch BP
       if (branch_true("11", v.m.icc, r.e.ctrl.inst) = '1') then
           bp2b_correct_pc := r.e.bp2b_branch_address;
           bp2b_annul := '1';
       end if;
+      
+      -- -- Always Branch
+      -- if (branch_true("11", v.m.icc, r.e.ctrl.inst) = '0') then
+      --     bp2b_correct_pc := r.e.ctrl.pc(31 downto PCLOW) + 1;
+      --     bp2b_annul := '1';
+      -- end if;
     end if;
 
     -- Updates pipeline registers
@@ -4037,6 +4052,7 @@ begin -- Begin of IU3 Architecture
       v.f.branch := '1'; v.f.pc := xc_trap_address;
       npc := v.f.pc;
       
+    -- bp2b: Corrects PC if BP misses
     elsif bp2b_annul = '1' then
       fe_npc := bp2b_correct_pc;
       v.f.pc := fe_npc; npc := v.f.pc;
@@ -4074,13 +4090,13 @@ begin -- Begin of IU3 Architecture
       v.f.branch := '0';
       
       -- bp2b: consult the 2 bit BP to set new PC (npc):
-      --if (BP2B_ENABLE) then
+      if (BP2B_ENABLE) then
         -- Checks the prediction and returns the next pc based on it
-        ---bp2b_next_pc(r.bp2b.table, fe_pc, v.f.branch, fe_npc);
+        bp2b_next_pc(r.bp2b.table, fe_pc, v.f.branch, fe_npc);
         
         -- bp2b: forwarding BP info
-        ---v.d.bp2b_branch_was_taken := v.f.branch;
-      --end if;
+        v.d.bp2b_branch_was_taken := v.f.branch;
+      end if;
       
       v.f.pc := fe_npc; npc := v.f.pc;
     end if;

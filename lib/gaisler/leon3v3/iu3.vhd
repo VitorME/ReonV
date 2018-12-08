@@ -390,6 +390,9 @@ architecture rtl of iu3 is
     irqstart : std_ulogic;
     irqlatctr : std_logic_vector(11 downto 0);
     irqlatmet : std_ulogic;
+    
+    -- bp2b: BP foward data
+    bp2b_branch_was_taken : std_ulogic;
   end record;
 
   type regacc_reg_type is record
@@ -420,6 +423,10 @@ architecture rtl of iu3 is
     bpimiss : std_ulogic;
     getpc : std_ulogic;
     decill: std_ulogic;
+    
+    -- bp2b: BP foward data
+    bp2b_branch_was_taken : std_ulogic;
+    bp2b_branch_address   : pctype;
   end record;
 
   type execute_reg_type is record
@@ -451,6 +458,10 @@ architecture rtl of iu3 is
     bp     : std_ulogic;
     rfe1, rfe2 : std_ulogic;
     itrhit  : std_ulogic;
+    
+    -- bp2b: BP foward data
+    bp2b_branch_was_taken : std_ulogic;
+    bp2b_branch_address   : pctype;
   end record;
 
   type memory_reg_type is record
@@ -593,6 +604,9 @@ architecture rtl of iu3 is
 --------------------------------------------------------------------------------
 -- 2 bit Branch Predictor (bp2b, by Vitor) -------------------------------------
 
+  -- 2 bit BP enable
+  constant BP2B_ENABLE : boolean := true;
+
   -- 2 bit BP state type
   subtype bp2b_states_type is std_logic_vector(1 downto 0);
 
@@ -626,21 +640,23 @@ architecture rtl of iu3 is
 
   -- 2 bit BP control type
   type bp2b_ctrl_type is record
-    table        : bp2b_table_type; -- 2 bit BP table
-    last_taken   : std_ulogic; -- boolean indicating if last branch was taken
-    last_hit     : std_ulogic; -- boolean indicating if last prediction was correct
-    total_misses : word; -- total BP misses
-    total_hits   : word; -- total BP hits
+    table          : bp2b_table_type; -- 2 bit BP table
+    last_taken     : std_ulogic; -- boolean indicating if last branch was taken
+    last_hit       : std_ulogic; -- boolean indicating if last prediction was correct
+    last_condition : std_ulogic; -- boolean indicating if last condition was true
+    total_misses   : word; -- total BP misses
+    total_hits     : word; -- total BP hits
   end record;
 
   -- Constant for a new/empty bp2b_ctrl_type
   constant bp2b_ctrl_res : bp2b_ctrl_type := (
-    table        => (others => BP2B_NEW_ENTRY),
-    last_taken   => '0',
-    last_hit     => '0',
-    total_misses => (others => '0'),
-    total_hits   => (others => '0')
-  );
+    table          => (others => BP2B_NEW_ENTRY),
+    last_taken     => '0',
+    last_hit       => '0',
+    last_condition => '0',
+    total_misses   => (others => '0'),
+    total_hits     => (others => '0')
+    );
 
   -- Evalues the next BP 2 bit state
   function bp2b_next_state (previous_state : bp2b_states_type; branch_true : std_ulogic) return bp2b_states_type is
@@ -648,35 +664,41 @@ architecture rtl of iu3 is
   begin
     if (branch_true = '1' and previous_state /= BP2B_ST) then
       tmp := previous_state + 1;
-  elsif (branch_true = '0' and previous_state /= BP2B_SNT) then
+    elsif (branch_true = '0' and previous_state /= BP2B_SNT) then
       tmp := previous_state - 1;
     end if;
     return (tmp);
   end;
 
-  -- Checks the prediction and returns if should or not take the branch
-  function bp2b_should_branch(branch_table : bp2b_table_type; pc : pctype) return boolean is
+  -- Checks the prediction and returns the next pc based on it
+  procedure bp2b_next_pc(branch_table : in bp2b_table_type; pc : in pctype;
+                         fbranch: out std_ulogic; npc : out pctype) is
     variable hash : integer;
     variable bp_state : bp2b_states_type;
     variable bp_tag, pc_tag : bp2b_table_tag_type;
-    variable tmp : boolean;
+    variable next_pc : pctype;
+    variable fb : std_ulogic;
   begin
     hash := conv_integer(pc((BP2B_TABLE_HASH_BITS+PCLOW)-1 downto PCLOW));
     bp_tag := branch_table(hash)(BP2B_TABLE_ENTRY_SIZE-1 downto (BP2B_TABLE_ENTRY_SIZE - BP2B_TABLE_TAG_BITS));
     pc_tag := pc((BP2B_TABLE_TAG_BITS + BP2B_TABLE_HASH_BITS + PCLOW)-1 downto BP2B_TABLE_HASH_BITS + PCLOW);
     bp_state := branch_table(hash)((BP2B_TABLE_DEST_BITS+2)-1 downto BP2B_TABLE_DEST_BITS);
     
-    tmp := false;
+    fb := '0';
+    next_pc(31 downto PCLOW) := pc(31 downto PCLOW) + 1;
     if ((pc_tag = bp_tag) and (bp_state = BP2B_WT or bp_state = BP2B_ST)) then
-        tmp := true;
+      fb := '1';
+      next_pc := branch_table(hash)(BP2B_TABLE_DEST_BITS-1 downto 0);
     end if;
     
-    return (tmp);
+    fbranch := fb;
+    npc := next_pc;
   end;
 
   -- Updates BP Table (you should only call this if the instr is a branch)
   procedure bp2b_update_table(curr_bp2b : in  bp2b_ctrl_type; branch_was_taken, branch_true : in std_ulogic;
                               pc, branch_address : in pctype;
+                              correct_pc : out pctype;
                               next_bp2b : out bp2b_ctrl_type) is
     variable hash : integer;
     variable bp_state, next_bp_state : bp2b_states_type;
@@ -689,12 +711,19 @@ architecture rtl of iu3 is
     
     -- Updates metadata
     next_bp2b.last_taken := branch_was_taken;
+    next_bp2b.last_condition := branch_true;
     if (branch_true = branch_was_taken) then
         next_bp2b.total_hits := curr_bp2b.total_hits + 1;
         next_bp2b.last_hit := '1';
     else
         next_bp2b.total_misses := curr_bp2b.total_misses + 1;
         next_bp2b.last_hit := '0';
+    end if;
+    
+    -- Gets the correct_pc in case of mistake
+    correct_pc := pc + 1;
+    if (branch_true = '1') then
+        correct_pc := branch_address;
     end if;
     
     -- Updates the table
@@ -1368,7 +1397,10 @@ architecture rtl of iu3 is
     rexpl => ((others => '0'),"00","0",'0','0',(others => '0'),'0','0','0','0','0','0'),
     irqstart => '0',
     irqlatctr => (others => '0'),
-    irqlatmet => '0'
+    irqlatmet => '0',
+
+    -- bp2b: BP foward data
+    bp2b_branch_was_taken => '0'
     );
   constant regacc_reg_res : regacc_reg_type := (
     ctrl     => pipeline_ctrl_res,
@@ -1401,7 +1433,11 @@ architecture rtl of iu3 is
     nobp     => '0',
     bpimiss  => '0',
     getpc    => '0',
-    decill   => '0'
+    decill   => '0',
+
+    -- bp2b: BP foward data
+    bp2b_branch_was_taken => '0',
+    bp2b_branch_address => (others => '0')
     );
   constant execute_reg_res : execute_reg_type := (
     ctrl    =>  pipeline_ctrl_res,
@@ -1433,7 +1469,11 @@ architecture rtl of iu3 is
     bp      => '0',
     rfe1    => '0',
     rfe2    => '0',
-    itrhit => '1'
+    itrhit => '1',
+
+    -- bp2b: BP foward data
+    bp2b_branch_was_taken => '0',
+    bp2b_branch_address => (others => '0')
     );
   constant memory_reg_res : memory_reg_type := (
     ctrl   => pipeline_ctrl_res,
@@ -1666,6 +1706,18 @@ architecture rtl of iu3 is
     --addr(4 downto 1)   := inst(11 downto 8);
     addr(4 downto 2)   := inst(11 downto 9);
     tmp(31 downto 2)  :=  addr(31 downto 2) + pc(31 downto 2) - 2;
+    return (tmp);
+  end;
+
+
+  function bp2b_calculate_branch_address(inst : word; pc : pctype) return pctype is
+    variable addr, tmp : pctype;
+  begin
+    addr(31 downto 12) := (others => inst(31));
+    addr(11)           := inst(7);
+    addr(10 downto 5)  := inst(30 downto 25);
+    addr(4 downto 2)   := inst(11 downto 9);
+    tmp(31 downto 2)  :=  addr(31 downto 2) + pc(31 downto 2);
     return (tmp);
   end;
 
@@ -2093,32 +2145,35 @@ end;
                 end case;
 
             -- This is a workaround to run branch instructions with no branch prediction
+            -- (old, only used if the BP is disabled)
             when R_BRANCH =>
-                if r.d.cnt = "11" then
-                    branch := branch_true;
-                    if (branch = '1') then
-                        --if (annul = '1') then
-                            annul_next := '1';
-                        --end if;
+                if (not BP2B_ENABLE) then
+                    if r.d.cnt = "11" then
+                        branch := branch_true;
+                        if (branch = '1') then
+                            --if (annul = '1') then
+                                annul_next := '1';
+                            --end if;
+                        else
+                            annul_next := annul_next or annul;
+                        end if;
+                        if r.d.inull = '1' then -- contention with JMPL
+                            hold_pc := '1'; annul_current := '1'; annul_next := '0';
+                        end if;
+                        cnt := "00";
+                    elsif r.d.cnt = "10" then
+                        cnt := "11";
+                        hold_pc := '1';
+                        pv := '0';
+                    elsif r.d.cnt = "01" then
+                        cnt := "10";
+                        hold_pc := '1';
+                        pv := '0';
                     else
-                        annul_next := annul_next or annul;
+                        cnt := "01";
+                        hold_pc := '1';
+                        pv := '0';
                     end if;
-                    if r.d.inull = '1' then -- contention with JMPL
-                        hold_pc := '1'; annul_current := '1'; annul_next := '0';
-                    end if;
-                    cnt := "00";
-                elsif r.d.cnt = "10" then
-                    cnt := "11";
-                    hold_pc := '1';
-                    pv := '0';
-                elsif r.d.cnt = "01" then
-                    cnt := "10";
-                    hold_pc := '1';
-                    pv := '0';
-                else
-                    cnt := "01";
-                    hold_pc := '1';
-                    pv := '0';
                 end if;
 
             when R_JAL | R_JALR =>
@@ -3287,8 +3342,9 @@ begin -- Begin of IU3 Architecture
   variable bpmiss : std_ulogic;
   variable pccomp : std_logic_vector(3 downto 0);
   
-  -- bp2b: annul flag in case of miss
-  variable bp2b_annul : std_ulogic;
+  -- bp2b: vars
+  variable bp2b_annul : std_ulogic; -- annul flag in case of miss
+  variable bp2b_correct_pc : pctype; -- the correct pc, in case of BP miss
 
   begin
 
@@ -3298,6 +3354,7 @@ begin -- Begin of IU3 Architecture
     de_pcout := rex_dpc(r.d.pc, r.d.rexen, r.d.rexpos);
     
     bp2b_annul := '0'; -- bp2b: annul flag
+    bp2b_correct_pc := (others => '0'); -- bp2b: correct pc
 
 -----------------------------------------------------------------------
 -- EXCEPTION STAGE
@@ -3693,6 +3750,19 @@ begin -- Begin of IU3 Architecture
 --    if (r.e.mul = '0') then
         ex_mulop1 := (others => '0'); ex_mulop2 := (others => '0');
     end if;
+    
+    -- Updates BP Table
+    if (BP2B_ENABLE and v.e.ctrl.annul = '0') then
+        -- CHECK: If you should only call this if the instr is a branch (?)
+      --bp2b_update_table(r.bp2b, r.m.bp2b_branch_was_taken, branch_true("11", r.m.icc, r.m.ctrl.inst), r.m.ctrl.pc, r.m.bp2b_branch_address, bp2b_correct_pc, v.bp2b);
+      --bp2b_annul := not v.bp2b.last_hit;
+      
+      -- Currently using a Always Not Branch BP
+      if (branch_true("11", v.m.icc, r.e.ctrl.inst) = '1') then
+          bp2b_correct_pc := r.e.bp2b_branch_address;
+          bp2b_annul := '1';
+      end if;
+    end if;
 
     -- Updates pipeline registers
     v.m.ctrl.annul := v.m.ctrl.annul or v.x.annul_all;
@@ -3757,6 +3827,10 @@ begin -- Begin of IU3 Architecture
     v.e.ctrl.annul := v.e.ctrl.annul or bp2b_annul;
     v.e.ctrl.wicc := v.e.ctrl.wicc and not bp2b_annul;
     v.e.ctrl.wreg := v.e.ctrl.wreg and not bp2b_annul;
+
+    -- bp2b: forwarding BP info
+    v.e.bp2b_branch_was_taken := r.a.bp2b_branch_was_taken;
+    v.e.bp2b_branch_address := r.a.bp2b_branch_address;
 
 
 -----------------------------------------------------------------------
@@ -3924,6 +3998,10 @@ begin -- Begin of IU3 Architecture
       end if;
     end if;
 
+    -- bp2b: forwarding BP info
+    v.a.bp2b_branch_was_taken := r.d.bp2b_branch_was_taken;
+    v.a.bp2b_branch_address := bp2b_calculate_branch_address(de_inst, de_pcout(31 downto PCLOW));
+
 -----------------------------------------------------------------------
 -- FETCH STAGE
 -----------------------------------------------------------------------
@@ -3935,6 +4013,8 @@ begin -- Begin of IU3 Architecture
       end if;
       if (xc_rstn = '0') then v.d.irqstart:='0'; end if;
     end if;
+
+    v.d.bp2b_branch_was_taken := '0';
 
     -- Slect next PC based on branch predictions (which are disabled)
     bpmiss := ex_bpmiss or ra_bpmiss;
@@ -3956,11 +4036,18 @@ begin -- Begin of IU3 Architecture
     elsif xc_exception = '1' then       -- exception
       v.f.branch := '1'; v.f.pc := xc_trap_address;
       npc := v.f.pc;
+      
+    elsif bp2b_annul = '1' then
+      fe_npc := bp2b_correct_pc;
+      v.f.pc := fe_npc; npc := v.f.pc;
+      v.f.branch := '1';
+
     elsif de_hold_pc = '1' then         -- 2 or more cycles instructions
       v.f.pc := r.f.pc; v.f.branch := r.f.branch;
     --   if bpmiss = '1' then
     --     v.f.pc := fe_npc; v.f.branch := '1';
     --     npc := v.f.pc;
+
       if ex_jump = '1' then
         v.f.pc := ex_jump_address; v.f.branch := '1';
         npc := v.f.pc;
@@ -3968,19 +4055,34 @@ begin -- Begin of IU3 Architecture
     elsif ex_jump = '1' then            -- Jump
       v.f.pc := ex_jump_address; v.f.branch := '1';
       npc := v.f.pc;
+
     -- elsif (ex_jump and not bpmiss) = '1' then
     --   v.f.pc := ex_jump_address; v.f.branch := '1';
     --   npc := v.f.pc;
+
     -- elsif (((ico.bpmiss and not r.d.annul) or r.a.bpimiss) and not bpmiss) = '1' then
     --    v.f.pc := r.d.pc; v.f.branch := '1';
     --    npc := v.f.pc;
     --    v.a.bpimiss := ico.bpmiss and not r.d.annul;
-    elsif de_branch = '1'               -- Branch
+
+    elsif de_branch = '1' and not BP2B_ENABLE -- Branch (old, only used if BP is disabled)
     then
        v.f.pc := branch_address(de_inst, de_pcout(31 downto PCLOW), de_rexbaddr1, r.d.rexen); v.f.branch := '1';
        npc := v.f.pc;
+
     else
-      v.f.branch := '0'; v.f.pc := fe_npc; npc := v.f.pc;
+      v.f.branch := '0';
+      
+      -- bp2b: consult the 2 bit BP to set new PC (npc):
+      --if (BP2B_ENABLE) then
+        -- Checks the prediction and returns the next pc based on it
+        ---bp2b_next_pc(r.bp2b.table, fe_pc, v.f.branch, fe_npc);
+        
+        -- bp2b: forwarding BP info
+        ---v.d.bp2b_branch_was_taken := v.f.branch;
+      --end if;
+      
+      v.f.pc := fe_npc; npc := v.f.pc;
     end if;
 
     ici.dpc <= r.d.pc(31 downto 2) & "00";
